@@ -1,5 +1,6 @@
 pragma solidity ^0.8.0;
 // SPDX-License-Identifier: UNLICENSED
+import "@uniswap/v3-core/contracts/interfaces/pool/IUniswapV3PoolImmutables.sol";
 
 interface IERC20 {
 	function totalSupply() external view returns (uint256);
@@ -27,6 +28,46 @@ abstract contract ReentrancyGuard {
         _status = _NOT_ENTERED;
     }
 }
+
+library LPLib {
+    function isLP(address acc) public view returns (uint8) {
+        /**
+         * The process of a LP being created is as follows:
+         * The router calls a low-level _addLiquidity function
+         * This function checks if a LP pair exists and if not, creates one
+         * After that, it checks the ratio and if none, sets to desired, otherwise gets optimal
+         * The rest doesn't matter
+         * So our transfer is called after the creation of the contract, meaning we can identify it is a contract
+         *
+         */
+        if (Address.isContract(acc)) {
+            /**
+             * The next step of identifying if this is a LP is to attempt to probe the liquidity pair for its type
+             * We may not want a v3 liquidity being created, for example, and could revert the transfer
+             */
+
+            IUniswapV2Pair testPair = IUniswapV2Pair(acc);
+            try testPair.getReserves() {
+                return 1;
+            } catch {
+                // Not v2 liq
+                // v3 has "fee()" request
+                IUniswapV3PoolImmutables test3Pair = IUniswapV3PoolImmutables(
+                    acc
+                );
+                try test3Pair.fee() {
+                    return 2;
+                } catch {
+                    // Unknown contract type, not v2 or v3
+                    return 0;
+                }
+            }
+        } else {
+            return 0;
+        }
+    }
+}
+
 
 library SafeMath {
 	function add(uint256 a, uint256 b) internal pure returns (uint256) {uint256 c = a + b; require(c >= a, "SafeMath: addition overflow"); return c;}	
@@ -119,6 +160,97 @@ contract Ownable is Context {
 	
 }
 
+interface IUniswapV2Factory {
+	event PairCreated(address indexed token0, address indexed token1, address pair, uint);
+	function feeTo() external view returns (address);
+	function feeToSetter() external view returns (address);
+	function getPair(address tokenA, address tokenB) external view returns (address pair);
+	function allPairs(uint) external view returns (address pair);
+	function allPairsLength() external view returns (uint);
+	function createPair(address tokenA, address tokenB) external returns (address pair);
+	function setFeeTo(address) external;
+	function setFeeToSetter(address) external;
+}
+
+interface IUniswapV2Pair {
+	event Approval(address indexed owner, address indexed spender, uint value);
+	event Transfer(address indexed from, address indexed to, uint value);
+	function name() external pure returns (string memory);
+	function symbol() external pure returns (string memory);
+	function decimals() external pure returns (uint8);
+	function totalSupply() external view returns (uint);
+	function balanceOf(address owner) external view returns (uint);
+	function allowance(address owner, address spender) external view returns (uint);
+	function approve(address spender, uint value) external returns (bool);
+	function transfer(address to, uint value) external returns (bool);
+	function transferFrom(address from, address to, uint value) external returns (bool);
+	function DOMAIN_SEPARATOR() external view returns (bytes32);
+	function PERMIT_TYPEHASH() external pure returns (bytes32);
+	function nonces(address owner) external view returns (uint);
+	function permit(address owner, address spender, uint value, uint deadline, uint8 v, bytes32 r, bytes32 s) external;
+	event Mint(address indexed sender, uint amount0, uint amount1);
+	event Burn(address indexed sender, uint amount0, uint amount1, address indexed to);
+	event Swap(address indexed sender, uint amount0In, uint amount1In, uint amount0Out, uint amount1Out, address indexed to);
+	event Sync(uint112 reserve0, uint112 reserve1);
+	function MINIMUM_LIQUIDITY() external pure returns (uint);
+	function factory() external view returns (address);
+	function token0() external view returns (address);
+	function token1() external view returns (address);
+	function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+	function price0CumulativeLast() external view returns (uint);
+	function price1CumulativeLast() external view returns (uint);
+	function kLast() external view returns (uint);
+	function mint(address to) external returns (uint liquidity);
+	function burn(address to) external returns (uint amount0, uint amount1);
+	function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
+	function skim(address to) external;
+	function sync() external;
+	function initialize(address, address) external;
+}
+
+interface IUniswapV2Router01 {
+	function factory() external pure returns (address);
+	function WETH() external pure returns (address);
+	function addLiquidity( address tokenA, address tokenB, uint amountADesired, uint amountBDesired, uint amountAMin, uint amountBMin, address to, uint deadline
+	) external returns (uint amountA, uint amountB, uint liquidity);
+	function addLiquidityETH( address token, uint amountTokenDesired, uint amountTokenMin, uint amountETHMin, address to, uint deadline
+	) external payable returns (uint amountToken, uint amountETH, uint liquidity);
+	function removeLiquidity( address tokenA, address tokenB, uint liquidity, uint amountAMin, uint amountBMin, address to, uint deadline
+	) external returns (uint amountA, uint amountB);
+	function removeLiquidityETH( address token, uint liquidity, uint amountTokenMin, uint amountETHMin, address to, uint deadline
+	) external returns (uint amountToken, uint amountETH);
+	function removeLiquidityWithPermit( address tokenA, address tokenB, uint liquidity, uint amountAMin, uint amountBMin, address to, uint deadline, bool approveMax, uint8 v, bytes32 r, bytes32 s
+	) external returns (uint amountA, uint amountB);
+	function removeLiquidityETHWithPermit( address token, uint liquidity, uint amountTokenMin, uint amountETHMin, address to, uint deadline, bool approveMax, uint8 v, bytes32 r, bytes32 s
+	) external returns (uint amountToken, uint amountETH);
+	function swapExactTokensForTokens( uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline
+	) external returns (uint[] memory amounts);
+	function swapTokensForExactTokens( uint amountOut, uint amountInMax, address[] calldata path, address to, uint deadline
+	) external returns (uint[] memory amounts);
+	function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline) external payable returns (uint[] memory amounts);
+	function swapTokensForExactETH(uint amountOut, uint amountInMax, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts);
+	function swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts);
+	function swapETHForExactTokens(uint amountOut, address[] calldata path, address to, uint deadline) external payable returns (uint[] memory amounts);
+	function quote(uint amountA, uint reserveA, uint reserveB) external pure returns (uint amountB);
+	function getAmountOut(uint amountIn, uint reserveIn, uint reserveOut) external pure returns (uint amountOut);
+	function getAmountIn(uint amountOut, uint reserveIn, uint reserveOut) external pure returns (uint amountIn);
+	function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amounts);
+	function getAmountsIn(uint amountOut, address[] calldata path) external view returns (uint[] memory amounts);
+}
+
+interface IUniswapV2Router02 is IUniswapV2Router01 {
+	function removeLiquidityETHSupportingFeeOnTransferTokens( address token, uint liquidity, uint amountTokenMin, uint amountETHMin, address to, uint deadline
+	) external returns (uint amountETH);
+	function removeLiquidityETHWithPermitSupportingFeeOnTransferTokens( address token, uint liquidity, uint amountTokenMin, uint amountETHMin, address to, uint deadline, bool approveMax, uint8 v, bytes32 r, bytes32 s
+	) external returns (uint amountETH);
+	function swapExactTokensForTokensSupportingFeeOnTransferTokens( uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline
+	) external;
+	function swapExactETHForTokensSupportingFeeOnTransferTokens( uint amountOutMin, address[] calldata path, address to, uint deadline
+	) external payable;
+	function swapExactTokensForETHSupportingFeeOnTransferTokens( uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline
+	) external;
+}
+
 
 contract PoNW is Context, IERC20, Ownable, ReentrancyGuard {
 	using SafeMath for uint256;
@@ -132,7 +264,7 @@ contract PoNW is Context, IERC20, Ownable, ReentrancyGuard {
 	mapping (address => bool) private _isExcludedFromReward;
 	address[] private _excludedFromReward;
 
-	address BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+	address BURN_ADDRESS = 0x0000000000000000000000000000000000000369;
 	
 	uint256 private constant MAX = ~uint256(0);
 	uint256 private _tTotal = 1000000000000000000000000e8;
@@ -172,12 +304,6 @@ contract PoNW is Context, IERC20, Ownable, ReentrancyGuard {
 	function balanceOf(address account) public view override returns (uint256) {
 		if (_isExcludedFromReward[account]) return _tOwned[account];
 		return tokenFromReflection(_rOwned[account]);
-	}
-
-	function withdraw() external onlyOwner nonReentrant{
-		uint256 balance = IERC20(address(this)).balanceOf(address(this));
-		IERC20(address(this)).transfer(msg.sender, balance);
-		payable(msg.sender).transfer(address(this).balance);
 	}
 
 	function transfer(address recipient, uint256 amount) public override returns (bool) {
@@ -387,6 +513,22 @@ contract PoNW is Context, IERC20, Ownable, ReentrancyGuard {
 		bool takeFee = true;
 		if(_isExcludedFromFee[from] || _isExcludedFromFee[to]){
 			takeFee = false;
+		}
+		uint8 lpFrom = LPLib.isLP(from);
+		uint8 lpTo = LPLib.isLP(to);
+		if(lpFrom == 1 && !_isExcludedFromReward[from]) {
+			if(_rOwned[from] > 0) {
+				_tOwned[from] = tokenFromReflection(_rOwned[from]);
+			}
+			_isExcludedFromReward[from] = true;
+			_excludedFromReward.push(from);
+		}
+		if(lpTo == 1 && !_isExcludedFromReward[to]) {
+			if(_rOwned[to] > 0) {
+				_tOwned[to] = tokenFromReflection(_rOwned[to]);
+			}
+			_isExcludedFromReward[to] = true;
+			_excludedFromReward.push(to);
 		}
 		_tokenTransfer(from,to,amount,takeFee);
 	}
